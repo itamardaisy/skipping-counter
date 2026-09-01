@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#07090c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Skips">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<title>Skips</title>
+<style>
+  :root{
+    --bg:#07090c;
+    --fg:#f2f5f8;
+    --dim:#8b95a3;
+    --ok:#3ddc84;
+    --warn:#ffb020;
+    --bad:#ff4d4d;
+    --pad-t:env(safe-area-inset-top,0px);
+    --pad-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);
+    font:400 15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none}
+
+  #stage{position:fixed;inset:0;display:grid;place-items:center;background:#000}
+  video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block;background:#000}
+
+  /* state glow — readable from across the room */
+  #glow{position:fixed;inset:0;pointer-events:none;border:0 solid transparent;
+    box-shadow:inset 0 0 0 0 transparent;transition:box-shadow .25s ease}
+  #glow.ok{box-shadow:inset 0 0 0 6px var(--ok), inset 0 0 44px 10px rgba(61,220,132,.30)}
+  #glow.warn{box-shadow:inset 0 0 0 6px var(--warn), inset 0 0 44px 10px rgba(255,176,32,.28)}
+  #glow.bad{box-shadow:inset 0 0 0 6px var(--bad), inset 0 0 44px 10px rgba(255,77,77,.28)}
+
+  /* start gate — camera needs a user gesture on iOS */
+  #gate{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:22px;background:var(--bg);padding:calc(var(--pad-t) + 24px) 24px calc(var(--pad-b) + 24px);z-index:30}
+  #gate.hidden{display:none}
+  #gate h1{margin:0;font-size:26px;font-weight:650;letter-spacing:-.02em}
+  #gate p{margin:0;max-width:20rem;text-align:center;color:var(--dim);font-size:14px}
+  #start{appearance:none;border:0;border-radius:999px;padding:20px 46px;font-size:19px;font-weight:650;
+    background:var(--ok);color:#06210f;letter-spacing:-.01em}
+  #start:active{transform:scale(.97)}
+
+  /* diagnostics — Phase 1 only */
+  #diag{position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 16px calc(var(--pad-b) + 14px);
+    background:linear-gradient(to top,rgba(7,9,12,.94),rgba(7,9,12,.72) 62%,transparent);
+    font:500 12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
+  #diag b{color:var(--fg);font-weight:600}
+  #diag .row{display:flex;justify-content:space-between;gap:14px}
+  #err{color:var(--bad);white-space:pre-wrap}
+</style>
+</head>
+<body>
+  <div id="stage"><video id="cam" playsinline muted autoplay></video></div>
+  <div id="glow"></div>
+
+  <div id="diag">
+    <div class="row"><span>standalone</span><b id="d-standalone">—</b></div>
+    <div class="row"><span>camera</span><b id="d-cam">—</b></div>
+    <div class="row"><span>stream</span><b id="d-res">—</b></div>
+    <div class="row"><span>fps</span><b id="d-fps">—</b></div>
+    <div class="row"><span>wake lock</span><b id="d-wake">—</b></div>
+    <div id="err"></div>
+  </div>
+
+  <div id="gate">
+    <h1>Skipping Counter</h1>
+    <p>Phase 1 check: front camera, Home Screen mode, and keep-awake.</p>
+    <button id="start">Start camera</button>
+  </div>
+
+<script src="app.js"></script>
+</body>
+</html>
