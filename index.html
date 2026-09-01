@@ -13,69 +13,111 @@
 <title>Skips</title>
 <style>
   :root{
-    --bg:#07090c;
-    --fg:#f2f5f8;
-    --dim:#8b95a3;
-    --ok:#3ddc84;
-    --warn:#ffb020;
-    --bad:#ff4d4d;
-    --pad-t:env(safe-area-inset-top,0px);
-    --pad-b:env(safe-area-inset-bottom,0px);
+    --bg:#07090c; --panel:#11151b; --fg:#f2f5f8; --dim:#7c8794;
+    --ok:#3ddc84; --warn:#ffb020; --bad:#ff4d4d;
+    --top:env(safe-area-inset-top,0px); --bot:env(safe-area-inset-bottom,0px);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--fg);
     font:400 15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
     -webkit-user-select:none;user-select:none;overscroll-behavior:none}
 
-  #stage{position:fixed;inset:0;display:grid;place-items:center;background:#000}
-  video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block;background:#000}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column;
+    padding:calc(var(--top) + 8px) 12px calc(var(--bot) + 8px)}
 
-  /* state glow — readable from across the room */
-  #glow{position:fixed;inset:0;pointer-events:none;border:0 solid transparent;
-    box-shadow:inset 0 0 0 0 transparent;transition:box-shadow .25s ease}
-  #glow.ok{box-shadow:inset 0 0 0 6px var(--ok), inset 0 0 44px 10px rgba(61,220,132,.30)}
-  #glow.warn{box-shadow:inset 0 0 0 6px var(--warn), inset 0 0 44px 10px rgba(255,176,32,.28)}
-  #glow.bad{box-shadow:inset 0 0 0 6px var(--bad), inset 0 0 44px 10px rgba(255,77,77,.28)}
+  /* ---- stats: sized to be read from across the room ---- */
+  #stats{display:flex;align-items:flex-start;justify-content:space-around;gap:8px;flex:0 0 auto}
+  .stat{text-align:center;min-width:0}
+  .val{font-size:clamp(46px,17vw,104px);line-height:.92;font-weight:700;letter-spacing:-.045em;
+    font-variant-numeric:tabular-nums;transition:color .12s ease}
+  .val.hit{color:var(--ok)}
+  .lab{margin-top:6px;font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  #sub{flex:0 0 auto;text-align:center;margin-top:10px;font-size:12.5px;color:var(--dim);
+    font-variant-numeric:tabular-nums}
+  #sub b{color:var(--fg);font-weight:600}
 
-  /* start gate — camera needs a user gesture on iOS */
-  #gate{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:22px;background:var(--bg);padding:calc(var(--pad-t) + 24px) 24px calc(var(--pad-b) + 24px);z-index:30}
+  /* ---- camera ---- */
+  #viewport{flex:1 1 auto;display:grid;place-items:center;min-height:0;padding:12px 0}
+  /* Sized in JS from the stream's aspect ratio: both children are absolutely
+     positioned, so the panel has no intrinsic size for aspect-ratio to use. */
+  #panel{position:relative;border-radius:18px;overflow:hidden;background:var(--panel);
+    box-shadow:0 0 0 1px rgba(255,255,255,.07)}
+  #panel video,#panel canvas{position:absolute;inset:0;width:100%;height:100%;
+    transform:scaleX(-1)}          /* mirror both so the overlay lines up */
+  #panel video{object-fit:cover;display:block}
+
+  /* ---- debug ---- */
+  #debug{flex:0 0 auto}
+  #debug.off{display:none}
+  #graph{width:100%;height:76px;display:block;border-radius:10px;background:var(--panel)}
+  #readout{display:flex;justify-content:space-between;gap:10px;margin-top:7px;
+    font:500 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
+  #readout b{color:var(--fg);font-weight:600}
+
+  #buttons{flex:0 0 auto;display:flex;gap:9px;margin-top:9px}
+  button{flex:1;appearance:none;border:0;border-radius:13px;padding:14px 10px;
+    font:600 14px/1 -apple-system,system-ui,sans-serif;color:var(--fg);background:#1b212a}
+  button:active{background:#252d38}
+
+  /* ---- state glow, legible from 3 m ---- */
+  #glow{position:fixed;inset:0;pointer-events:none;z-index:10;transition:box-shadow .22s ease}
+  #glow.ok{box-shadow:inset 0 0 0 5px var(--ok),inset 0 0 40px 8px rgba(61,220,132,.26)}
+  #glow.warn{box-shadow:inset 0 0 0 5px var(--warn),inset 0 0 40px 8px rgba(255,176,32,.22)}
+  #glow.bad{box-shadow:inset 0 0 0 5px var(--bad),inset 0 0 40px 8px rgba(255,77,77,.22)}
+
+  /* ---- start gate: iOS grants the camera only inside a user gesture ---- */
+  #gate{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:20px;background:var(--bg);
+    padding:calc(var(--top) + 24px) 26px calc(var(--bot) + 24px);text-align:center}
   #gate.hidden{display:none}
-  #gate h1{margin:0;font-size:26px;font-weight:650;letter-spacing:-.02em}
-  #gate p{margin:0;max-width:20rem;text-align:center;color:var(--dim);font-size:14px}
-  #start{appearance:none;border:0;border-radius:999px;padding:20px 46px;font-size:19px;font-weight:650;
-    background:var(--ok);color:#06210f;letter-spacing:-.01em}
-  #start:active{transform:scale(.97)}
-
-  /* diagnostics — Phase 1 only */
-  #diag{position:fixed;left:0;right:0;bottom:0;z-index:20;
-    padding:14px 16px calc(var(--pad-b) + 14px);
-    background:linear-gradient(to top,rgba(7,9,12,.94),rgba(7,9,12,.72) 62%,transparent);
-    font:500 12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
-  #diag b{color:var(--fg);font-weight:600}
-  #diag .row{display:flex;justify-content:space-between;gap:14px}
-  #err{color:var(--bad);white-space:pre-wrap}
+  #gate h1{margin:0;font-size:27px;font-weight:680;letter-spacing:-.025em}
+  #gate p{margin:0;max-width:20rem;color:var(--dim);font-size:14px}
+  #start{flex:0 0 auto;border-radius:999px;padding:19px 48px;font-size:18px;font-weight:680;
+    background:var(--ok);color:#06210f}
+  #start[disabled]{background:#1b212a;color:var(--dim)}
+  #err{color:var(--bad);font-size:13px;white-space:pre-wrap;max-width:22rem}
 </style>
 </head>
 <body>
-  <div id="stage"><video id="cam" playsinline muted autoplay></video></div>
-  <div id="glow"></div>
+<div id="app">
+  <div id="stats">
+    <div class="stat"><div class="val" id="count">0</div><div class="lab">skips</div></div>
+    <div class="stat"><div class="val" id="time">0:00</div><div class="lab">active</div></div>
+  </div>
+  <div id="sub"><b id="cadence">—</b> spm &nbsp;·&nbsp; session <b id="session">0:00</b></div>
 
-  <div id="diag">
-    <div class="row"><span>standalone</span><b id="d-standalone">—</b></div>
-    <div class="row"><span>camera</span><b id="d-cam">—</b></div>
-    <div class="row"><span>stream</span><b id="d-res">—</b></div>
-    <div class="row"><span>fps</span><b id="d-fps">—</b></div>
-    <div class="row"><span>wake lock</span><b id="d-wake">—</b></div>
-    <div id="err"></div>
+  <div id="viewport">
+    <div id="panel">
+      <video id="cam" playsinline muted autoplay></video>
+      <canvas id="pose"></canvas>
+    </div>
   </div>
 
-  <div id="gate">
-    <h1>Skipping Counter</h1>
-    <p>Phase 1 check: front camera, Home Screen mode, and keep-awake.</p>
-    <button id="start">Start camera</button>
+  <div id="debug">
+    <canvas id="graph"></canvas>
+    <div id="readout">
+      <span>fps <b id="r-fps">—</b></span>
+      <span>amp <b id="r-amp">—</b></span>
+      <span>thr <b id="r-thr">—</b></span>
+      <span id="r-state">—</span>
+    </div>
   </div>
 
-<script src="app.js"></script>
+  <div id="buttons">
+    <button id="reset">Reset</button>
+    <button id="toggle">Hide graph</button>
+  </div>
+</div>
+
+<div id="glow"></div>
+
+<div id="gate">
+  <h1>Skipping Counter</h1>
+  <p>Prop the phone up a few metres away so your whole body is in frame, then skip.</p>
+  <button id="start" disabled>Loading model…</button>
+  <div id="err"></div>
+</div>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>
