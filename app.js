@@ -1,22 +1,33 @@
 import { FilesetResolver, PoseLandmarker }
   from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs';
-import { SkipDetector, bodySignal } from './detector.js';
+import { SkipDetector, extractFrame } from './detector.js';
+import { ropeRegions, ropeEnergies, toLuma } from './rope.js';
 
+// ------------------------------------------------------------- settings ----
+// Field-testing switches, all in the URL so the home-screen app needs no UI:
+//   ?model=lite|full|heavy   pose model (default full: steadier on busy backgrounds)
+//   ?flight=enforce          require both feet off the floor
+//   ?rope=enforce            require the rope to be seen
+const params = new URLSearchParams(location.search);
+const MODEL_NAME = ['lite', 'full', 'heavy'].includes(params.get('model')) ? params.get('model') : 'full';
 const WASM  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm';
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/'
-            + 'pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+            + `pose_landmarker_${MODEL_NAME}/float16/1/pose_landmarker_${MODEL_NAME}.task`;
+const overrides = {};
+if (params.get('flight')) overrides.flightGate = params.get('flight');
+if (params.get('rope')) overrides.ropeGate = params.get('rope');
 
 const $ = (id) => document.getElementById(id);
 const video = $('cam'), glow = $('glow'), panel = $('panel');
 const poseCv = $('pose'), poseCtx = poseCv.getContext('2d');
 const graphCv = $('graph'), graphCtx = graphCv.getContext('2d');
 
-const det = new SkipDetector();
+const det = new SkipDetector(overrides);
 let landmarker = null;
 let lastTimestamp = 0;
 
 // ---------------------------------------------------------------- model ----
-// Start the 6 MB download immediately; the user still has to tap Start, so the
+// Start the download immediately; the user still has to tap Start, so the
 // wait usually costs nothing.
 const modelReady = (async () => {
   const fileset = await FilesetResolver.forVisionTasks(WASM);
@@ -25,8 +36,10 @@ const modelReady = (async () => {
     runningMode: 'VIDEO',
     numPoses: 1,
     minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    // Stricter presence and tracking: on a cluttered background a weak pose
+    // is more often a coat on a chair than a person.
+    minPosePresenceConfidence: 0.6,
+    minTrackingConfidence: 0.6,
   });
   try { landmarker = await make('GPU'); }
   catch { landmarker = await make('CPU'); }
@@ -36,6 +49,7 @@ modelReady.then(
   () => { $('start').disabled = false; $('start').textContent = 'Start'; },
   (e) => { $('err').textContent = `Model failed to load — ${e.message}`; },
 );
+$('r-model').textContent = MODEL_NAME;
 
 // ------------------------------------------------------------ wake lock ----
 let wakeLock = null;
@@ -89,6 +103,31 @@ $('start').addEventListener('click', start, { once: true });
 addEventListener('resize', layoutPanel);
 addEventListener('orientationchange', () => setTimeout(layoutPanel, 250));
 
+// ------------------------------------------------------------ rope pixels ----
+// A small greyscale copy of each frame is enough to see the rope's streak and
+// costs well under a millisecond.
+const small = document.createElement('canvas');
+const smallCtx = small.getContext('2d', { willReadFrequently: true });
+let luma = null, prevLuma = null, spare = null;
+let regions = null;
+
+function sampleRope(frame) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const k = 192 / Math.max(vw, vh);
+  const w = Math.round(vw * k), h = Math.round(vh * k);
+  if (small.width !== w || small.height !== h) {
+    small.width = w; small.height = h;
+    luma = prevLuma = spare = null;
+  }
+  smallCtx.drawImage(video, 0, 0, w, h);
+  const next = toLuma(smallCtx.getImageData(0, 0, w, h).data, w, h, spare);
+  spare = prevLuma; prevLuma = luma; luma = next;
+  regions = frame ? ropeRegions(frame) : null;
+  if (!frame || !prevLuma) return null;
+  return ropeEnergies(luma, prevLuma, w, h, regions);
+}
+
 // ----------------------------------------------------------------- loop ----
 const history = [];          // recent samples, for the debug graph
 const GRAPH_SECONDS = 4;
@@ -106,10 +145,15 @@ function onFrame(now) {
     landmarks = landmarker.detectForVideo(video, ts).landmarks?.[0] ?? null;
   } catch { /* transient decode hiccup — treat as a dropped frame */ }
 
-  const signal = bodySignal(landmarks, video.videoWidth, video.videoHeight);
-  const state = det.update(signal, t);
+  const frame = extractFrame(landmarks, video.videoWidth, video.videoHeight);
+  let rope = null;
+  try { rope = sampleRope(frame); } catch { /* canvas read refused — run without rope */ }
+  if (frame) frame.rope = rope;
+  const state = det.update(frame, t);
 
-  history.push({ t, bp: state.bp, thresh: state.thresh, flash: state.flash });
+  if (rec.on) recordFrame(t, landmarks, rope);
+
+  history.push({ t, bp: state.bp, thresh: state.thresh, flash: state.flash, du: state.duFlash });
   while (history.length && t - history[0].t > GRAPH_SECONDS) history.shift();
 
   frames++;
@@ -125,22 +169,33 @@ const mmss = (s) => {
   const total = Math.floor(s);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 };
+const mark = (ok) => (ok === null || ok === undefined ? '·' : ok ? '✓' : '✗');
 
-let hitUntil = 0;
+let hitUntil = 0, duUntil = 0;
 function render(s, landmarks) {
   $('count').textContent = s.count;
   $('time').textContent = mmss(s.activeTime);
   $('session').textContent = mmss(s.sessionTime);
   $('cadence').textContent = s.cadence ? Math.round(s.cadence) : '—';
+  $('du').textContent = s.du;
 
-  if (s.flash) hitUntil = performance.now() + 140;
-  $('count').classList.toggle('hit', performance.now() < hitUntil);
+  const nowMs = performance.now();
+  if (s.flash) hitUntil = nowMs + 140;
+  if (s.duFlash) duUntil = nowMs + 400;
+  $('count').classList.toggle('hit', nowMs < hitUntil);
+  $('du-wrap').classList.toggle('hit', nowMs < duUntil);
 
   glow.className = !s.tracked ? 'bad' : s.skipping ? 'ok' : 'warn';
   $('r-fps').textContent = fps.toFixed(0);
   $('r-amp').textContent = Math.abs(s.bp).toFixed(3);
   $('r-thr').textContent = s.thresh.toFixed(3);
-  $('r-state').textContent = !s.tracked ? 'no body' : s.skipping ? 'skipping' : 'idle';
+  $('r-state').textContent = s.reason ?? (s.skipping ? 'skipping' : 'idle');
+  $('g-still').textContent = mark(s.still);
+  $('g-flight').textContent = s.flight === null ? '·' : s.flight.toFixed(3);
+  $('g-rope').textContent = `${s.ropeE.toFixed(1)} ${mark(s.ropeSeen)}`;
+  $('g-spikes').textContent = s.spikes ?? '·';
+
+  if (rec.on) $('rec').textContent = `■ ${mmss((nowMs - rec.wall0) / 1000)}`;
 
   drawPose(landmarks, s);
   drawGraph();
@@ -154,7 +209,7 @@ function fitCanvas(cv) {
 }
 
 function drawPose(landmarks, s) {
-  fitCanvas(poseCv);
+  const dpr = fitCanvas(poseCv);
   const { width: w, height: h } = poseCv;
   poseCtx.clearRect(0, 0, w, h);
   if (!landmarks) return;
@@ -170,6 +225,19 @@ function drawPose(landmarks, s) {
     poseCtx.lineTo(b.x * w, b.y * h);
   }
   poseCtx.stroke();
+
+  // Where the rope is being looked for — only while the debug panel is open.
+  if (regions && !$('debug').classList.contains('off')) {
+    poseCtx.lineWidth = dpr;
+    for (const [r, style] of [[regions.top, 'rgba(90,200,255,.8)'], [regions.bot, 'rgba(90,200,255,.45)'],
+                              [regions.ctrl, 'rgba(255,255,255,.3)']]) {
+      if (!r) continue;
+      poseCtx.strokeStyle = style;
+      poseCtx.setLineDash(r === regions.ctrl ? [4 * dpr, 4 * dpr] : []);
+      poseCtx.strokeRect(r.x0 * w, r.y0 * h, (r.x1 - r.x0) * w, (r.y1 - r.y0) * h);
+    }
+    poseCtx.setLineDash([]);
+  }
 }
 
 function drawGraph() {
@@ -200,18 +268,123 @@ function drawGraph() {
   history.forEach((p, i) => (i ? graphCtx.lineTo(x(p.t), y(p.bp)) : graphCtx.moveTo(x(p.t), y(p.bp))));
   graphCtx.stroke();
 
-  // where skips were counted
-  graphCtx.fillStyle = '#fff';
+  // where skips (white) and double unders (amber) were counted
   for (const p of history) {
     if (!p.flash) continue;
+    graphCtx.fillStyle = p.du ? '#ffb020' : '#fff';
     graphCtx.beginPath();
-    graphCtx.arc(x(p.t), y(p.bp), 2.6 * dpr, 0, Math.PI * 2);
+    graphCtx.arc(x(p.t), y(p.bp), (p.du ? 3.6 : 2.6) * dpr, 0, Math.PI * 2);
     graphCtx.fill();
   }
 }
 
+// ------------------------------------------------------------- recording ----
+// Records every frame's landmarks and rope energies (plus, optionally, the
+// video) so sessions can be replayed against the detector with replay.mjs.
+const rec = { on: false, frames: [], t0: 0, wall0: 0, startCount: 0, startDU: 0,
+              mr: null, chunks: [], videoBlob: null, mime: '' };
+const r4 = (v) => Math.round(v * 1e4) / 1e4;
+
+function recordFrame(t, landmarks, rope) {
+  rec.frames.push({
+    t: Math.round((t - rec.t0) * 1000) / 1000,
+    lm: landmarks ? landmarks.map((p) => [r4(p.x), r4(p.y), r4(p.z ?? 0), Math.round((p.visibility ?? 1) * 100) / 100]) : null,
+    rope,
+  });
+}
+
+function startRec() {
+  if (!video.srcObject) return;
+  // rVFC's `now` shares performance.now()'s clock, so frame times line up.
+  Object.assign(rec, { on: true, frames: [], t0: performance.now() / 1000,
+                       wall0: performance.now(), startCount: det.count, startDU: det.du,
+                       chunks: [], videoBlob: null, mime: '' });
+  $('rec').classList.add('on');
+  if ($('rec-video').checked && 'MediaRecorder' in window) {
+    const mime = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm']
+      .find((m) => MediaRecorder.isTypeSupported?.(m)) ?? '';
+    try {
+      rec.mr = new MediaRecorder(video.srcObject, { ...(mime && { mimeType: mime }), videoBitsPerSecond: 1_500_000 });
+      rec.mime = rec.mr.mimeType || mime || 'video/mp4';
+      rec.mr.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
+      rec.mr.start(1000);
+    } catch { rec.mr = null; }
+  }
+}
+
+function stopRec() {
+  rec.on = false;
+  $('rec').classList.remove('on');
+  $('rec').textContent = 'Record';
+  const finish = () => {
+    if (rec.chunks.length) rec.videoBlob = new Blob(rec.chunks, { type: rec.mime });
+    $('app-count').textContent = det.count - rec.startCount;
+    $('app-du').textContent = det.du - rec.startDU;
+    $('sheet').classList.remove('hidden');
+  };
+  if (rec.mr && rec.mr.state !== 'inactive') { rec.mr.onstop = finish; rec.mr.stop(); }
+  else finish();
+  rec.mr = null;
+}
+
+function download(files) {
+  for (const f of files) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(f);
+    a.download = f.name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  }
+}
+
+function closeSheet() {
+  $('sheet').classList.add('hidden');
+  rec.frames = []; rec.chunks = []; rec.videoBlob = null;
+}
+
+// Built synchronously inside the tap, because iOS only allows the share
+// sheet while the user gesture is still live.
+$('save').addEventListener('click', () => {
+  const num = (id) => ($(id).value === '' ? null : Number($(id).value));
+  const activity = $('activity').value;
+  const meta = {
+    version: 1,
+    activity,
+    expected: num('truth'),
+    expectedDU: num('truth-du'),
+    note: $('note').value,
+    appCount: det.count - rec.startCount,
+    appDU: det.du - rec.startDU,
+    model: MODEL_NAME,
+    videoW: video.videoWidth,
+    videoH: video.videoHeight,
+    detector: det.p,
+    userAgent: navigator.userAgent,
+    recordedAt: new Date().toISOString(),
+  };
+  const stamp = meta.recordedAt.slice(0, 19).replace(/[:T]/g, '-');
+  const base = `skips-${activity}-${stamp}`;
+  const files = [new File([JSON.stringify({ meta, frames: rec.frames })], `${base}.json`, { type: 'application/json' })];
+  if (rec.videoBlob) {
+    const ext = rec.mime.includes('mp4') ? 'mp4' : 'webm';
+    files.push(new File([rec.videoBlob], `${base}.${ext}`, { type: rec.mime }));
+  }
+  if (navigator.canShare?.({ files })) {
+    navigator.share({ files, title: base }).then(closeSheet, (e) => {
+      if (e.name !== 'AbortError') { download(files); closeSheet(); }
+    });
+  } else {
+    download(files);
+    closeSheet();
+  }
+});
+$('discard').addEventListener('click', closeSheet);
+
 // -------------------------------------------------------------- controls ----
 $('reset').addEventListener('click', () => { det.reset(); history.length = 0; });
+$('rec').addEventListener('click', () => (rec.on ? stopRec() : startRec()));
 $('toggle').addEventListener('click', (e) => {
   const hidden = $('debug').classList.toggle('off');
   e.target.textContent = hidden ? 'Show graph' : 'Hide graph';

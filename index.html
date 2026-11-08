@@ -35,6 +35,8 @@
   #sub{flex:0 0 auto;text-align:center;margin-top:10px;font-size:12.5px;color:var(--dim);
     font-variant-numeric:tabular-nums}
   #sub b{color:var(--fg);font-weight:600}
+  #du-wrap{transition:color .2s ease}
+  #du-wrap.hit, #du-wrap.hit b{color:var(--warn)}
 
   /* ---- camera ---- */
   #viewport{flex:1 1 auto;display:grid;place-items:center;min-height:0;padding:12px 0}
@@ -50,20 +52,39 @@
   #debug{flex:0 0 auto}
   #debug.off{display:none}
   #graph{width:100%;height:76px;display:block;border-radius:10px;background:var(--panel)}
-  #readout{display:flex;justify-content:space-between;gap:10px;margin-top:7px;
+  .readout{display:flex;justify-content:space-between;gap:10px;margin-top:7px;
     font:500 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim)}
-  #readout b{color:var(--fg);font-weight:600}
+  .readout + .readout{margin-top:2px}
+  .readout b{color:var(--fg);font-weight:600}
 
   #buttons{flex:0 0 auto;display:flex;gap:9px;margin-top:9px}
   button{flex:1;appearance:none;border:0;border-radius:13px;padding:14px 10px;
     font:600 14px/1 -apple-system,system-ui,sans-serif;color:var(--fg);background:#1b212a}
   button:active{background:#252d38}
+  #rec.on{background:#3a1416;color:#ff8a8a;font-variant-numeric:tabular-nums}
 
   /* ---- state glow, legible from 3 m ---- */
   #glow{position:fixed;inset:0;pointer-events:none;z-index:10;transition:box-shadow .22s ease}
   #glow.ok{box-shadow:inset 0 0 0 5px var(--ok),inset 0 0 40px 8px rgba(61,220,132,.26)}
   #glow.warn{box-shadow:inset 0 0 0 5px var(--warn),inset 0 0 40px 8px rgba(255,176,32,.22)}
   #glow.bad{box-shadow:inset 0 0 0 5px var(--bad),inset 0 0 40px 8px rgba(255,77,77,.22)}
+
+  /* ---- save-recording sheet ---- */
+  #sheet{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-end;background:rgba(0,0,0,.55)}
+  #sheet.hidden{display:none}
+  #sheet form{width:100%;background:var(--panel);border-radius:20px 20px 0 0;
+    padding:20px 18px calc(var(--bot) + 16px);display:grid;gap:12px;-webkit-user-select:text;user-select:text}
+  #sheet h2{margin:0;font-size:18px;font-weight:650}
+  #sheet .hint{margin:-6px 0 0;font-size:12.5px;color:var(--dim)}
+  #sheet label{display:grid;gap:5px;font-size:12px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--dim)}
+  #sheet .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #sheet select,#sheet input{width:100%;font:500 16px/1.2 -apple-system,system-ui,sans-serif;color:var(--fg);
+    background:#1b212a;border:1px solid #2a323d;border-radius:11px;padding:11px 12px}
+  #sheet .actions{display:flex;gap:9px;margin-top:4px}
+  #save{background:var(--ok);color:#06210f}
+  .check{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);margin-top:7px}
+  .check input{width:auto;margin:0}
 
   /* ---- start gate: iOS grants the camera only inside a user gesture ---- */
   #gate{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;
@@ -84,7 +105,8 @@
     <div class="stat"><div class="val" id="count">0</div><div class="lab">skips</div></div>
     <div class="stat"><div class="val" id="time">0:00</div><div class="lab">active</div></div>
   </div>
-  <div id="sub"><b id="cadence">—</b> spm &nbsp;·&nbsp; session <b id="session">0:00</b></div>
+  <div id="sub"><b id="cadence">—</b> spm &nbsp;·&nbsp; <span id="du-wrap"><b id="du">0</b> double unders</span>
+    &nbsp;·&nbsp; session <b id="session">0:00</b></div>
 
   <div id="viewport">
     <div id="panel">
@@ -95,25 +117,66 @@
 
   <div id="debug">
     <canvas id="graph"></canvas>
-    <div id="readout">
+    <div class="readout">
       <span>fps <b id="r-fps">—</b></span>
       <span>amp <b id="r-amp">—</b></span>
       <span>thr <b id="r-thr">—</b></span>
+      <span>model <b id="r-model">—</b></span>
       <span id="r-state">—</span>
     </div>
+    <div class="readout">
+      <span>still <b id="g-still">·</b></span>
+      <span>flight <b id="g-flight">·</b></span>
+      <span>rope <b id="g-rope">·</b></span>
+      <span>passes <b id="g-spikes">·</b></span>
+    </div>
+    <label class="check"><input type="checkbox" id="rec-video" checked> save video with recordings</label>
   </div>
 
   <div id="buttons">
     <button id="reset">Reset</button>
+    <button id="rec">Record</button>
     <button id="toggle">Hide graph</button>
   </div>
 </div>
 
 <div id="glow"></div>
 
+<div id="sheet" class="hidden">
+  <form onsubmit="return false">
+    <h2>Save recording</h2>
+    <p class="hint">The app counted <b id="app-count">0</b> skips and <b id="app-du">0</b> double unders. Enter what really happened.</p>
+    <label>What were you doing
+      <select id="activity">
+        <option value="basic">Skipping — basic two-foot bounce</option>
+        <option value="alternate">Skipping — alternate foot / boxer</option>
+        <option value="double-under">Skipping — double unders</option>
+        <option value="mixed">Skipping — mixed / tricks</option>
+        <option value="high-knees">Skipping — high knees</option>
+        <option value="criss-cross">Skipping — criss-cross</option>
+        <option value="walk-across">Walking across the frame</option>
+        <option value="walk-toward">Walking toward / away from the phone</option>
+        <option value="walk-in-place">Walking or marching in place</option>
+        <option value="jump-no-rope">Jumping without a rope</option>
+        <option value="idle">Standing / resting</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    <div class="row">
+      <label>Real skips <input id="truth" type="number" inputmode="numeric" min="0" placeholder="0"></label>
+      <label>Real double unders <input id="truth-du" type="number" inputmode="numeric" min="0" placeholder="0"></label>
+    </div>
+    <label>Note <input id="note" type="text" placeholder="background, lighting, distance…"></label>
+    <div class="actions">
+      <button id="discard" type="button">Discard</button>
+      <button id="save" type="button">Save / Share</button>
+    </div>
+  </form>
+</div>
+
 <div id="gate">
   <h1>Skipping Counter</h1>
-  <p>Prop the phone up a few metres away so your whole body is in frame, then skip.</p>
+  <p>Prop the phone up a few metres away so your whole body is in frame, head to feet with some space above, then skip.</p>
   <button id="start" disabled>Loading model…</button>
   <div id="err"></div>
 </div>
