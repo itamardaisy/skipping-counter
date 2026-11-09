@@ -1,0 +1,11 @@
+{
+  "appId": "com.itamardaisy.skippingcounter",
+  "appName": "Skipping Counter",
+  "webDir": "www",
+  "backgroundColor": "#07090c",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#07090c",
+    "scrollEnabled": false
+  }
+}

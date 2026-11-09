@@ -1,0 +1,16 @@
+node_modules/
+www/
+.cache/
+recordings/
+.firebase/
+*.bundle
+.DS_Store
+
+# iOS build products (the ios/ project itself is committed)
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+xcuserdata/

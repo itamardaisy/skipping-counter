@@ -1,7 +1,18 @@
-import { FilesetResolver, PoseLandmarker }
-  from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/vision_bundle.mjs';
 import { SkipDetector, extractFrame } from './detector.js';
 import { ropeRegions, ropeEnergies, toLuma } from './rope.js';
+
+// MediaPipe is bundled into vendor/ and models/ by `npm run build`, so the
+// iOS app and the hosted site work offline and start fast. A plain checkout
+// has no vendor folder, so it falls back to the CDN.
+const CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21';
+const here = (p) => new URL(p, location.href).href;
+let vision, LOCAL = true;
+try { vision = await import('./vendor/tasks-vision/vision_bundle.mjs'); }
+catch { vision = await import(`${CDN}/vision_bundle.mjs`); LOCAL = false; }
+const { FilesetResolver, PoseLandmarker } = vision;
+
+// Running inside the App Store build (Capacitor) rather than a browser.
+const NATIVE = !!window.Capacitor?.isNativePlatform?.();
 
 // ------------------------------------------------------------- settings ----
 // Field-testing switches, all in the URL so the home-screen app needs no UI:
@@ -10,9 +21,11 @@ import { ropeRegions, ropeEnergies, toLuma } from './rope.js';
 //   ?rope=enforce            require the rope to be seen
 const params = new URLSearchParams(location.search);
 const MODEL_NAME = ['lite', 'full', 'heavy'].includes(params.get('model')) ? params.get('model') : 'full';
-const WASM  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm';
-const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/'
-            + `pose_landmarker_${MODEL_NAME}/float16/1/pose_landmarker_${MODEL_NAME}.task`;
+const WASM  = LOCAL ? here('./vendor/tasks-vision/wasm') : `${CDN}/wasm`;
+const MODEL = LOCAL && MODEL_NAME !== 'heavy'
+  ? here(`./models/pose_landmarker_${MODEL_NAME}.task`)
+  : 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/'
+    + `pose_landmarker_${MODEL_NAME}/float16/1/pose_landmarker_${MODEL_NAME}.task`;
 const overrides = {};
 if (params.get('flight')) overrides.flightGate = params.get('flight');
 if (params.get('rope')) overrides.ropeGate = params.get('rope');
@@ -50,6 +63,14 @@ modelReady.then(
   (e) => { $('err').textContent = `Model failed to load — ${e.message}`; },
 );
 $('r-model').textContent = MODEL_NAME;
+
+// The store build opens on the counter alone: the signal graph stays one tap
+// away, and recording sessions for tuning is a developer tool.
+if (NATIVE) {
+  $('debug').classList.add('off');
+  $('toggle').textContent = 'Show graph';
+  $('rec').hidden = true;
+}
 
 // ------------------------------------------------------------ wake lock ----
 let wakeLock = null;

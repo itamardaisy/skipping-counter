@@ -72,14 +72,49 @@ against the truth, plus what fraction of bounces failed each gate.
 | `rope.js` | rope regions and frame-difference energy (no DOM) |
 | `test.mjs` | synthetic-body tests: skipping styles, walking, double unders |
 | `replay.mjs` | runs recorded sessions through the detector |
+| `privacy.html`, `support.html` | pages the App Store links to |
+| `scripts/build.mjs` | assembles `www/` with MediaPipe bundled |
+| `scripts/ios-setup.sh` | one-time native tweaks after `npx cap add ios` |
+| `capacitor.config.json` | iOS shell: bundle ID, app name, web folder |
+| `firebase.json` | hosting for `www/` |
 
 ## Development
 
-Static files, no build step. Serve locally with:
+Needs Node 22+. The source files run as they are (MediaPipe then loads from
+the CDN); `npm run build` assembles `www/` with MediaPipe's code, wasm and the
+lite/full pose models bundled, which is what the site and the iOS app ship.
 
-    python3 -m http.server 8000
-
-Run the tests with `node test.mjs`.
+    npm install
+    npm test            # synthetic detector tests
+    npm run serve       # build, then serve www/ on http://localhost:8000
 
 Camera access needs a secure context, so `localhost` works on a desktop
 browser but testing on the phone requires the deployed HTTPS URL.
+
+## Web: Firebase Hosting (GCP project `skipping-counter-app`)
+
+One-time:
+
+    npm install -g firebase-tools
+    firebase login
+    firebase projects:addfirebase skipping-counter-app
+
+Deploy by hand with `npm run deploy:web`. To deploy on every push instead,
+add a service-account key as the repository secret `FIREBASE_SERVICE_ACCOUNT`
+(`firebase init hosting:github` does this for you); until then the GitHub
+Action builds and tests but skips the deploy. Privacy and support pages are at
+`/privacy` and `/support`.
+
+## iOS app (Capacitor)
+
+The same web app, bundled into a native shell. One-time, on a Mac with Xcode:
+
+    npm install
+    npm run ios:setup   # build www/, create ios/, camera text, icon, portrait, iPhone-only, screen stays on
+
+Then, after every change to the web files:
+
+    npm run ios         # rebuild, copy into the iOS project, open Xcode
+
+Commit the generated `ios/` folder. Store listing text is in
+`store/app-store.md`; the app icon and launch screen are in `resources/`.
