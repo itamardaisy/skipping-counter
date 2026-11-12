@@ -10,7 +10,8 @@
     "serve": "npm run build && python3 -m http.server 8000 --directory www",
     "ios:setup": "npm run build && npx cap add ios && bash scripts/ios-setup.sh",
     "ios": "npm run build && npx cap sync ios && npx cap open ios",
-    "deploy:web": "npm run build && firebase deploy --only hosting"
+    "deploy:web": "npm run build && firebase deploy --only hosting",
+    "release:ios": "bash scripts/release-ios.sh"
   },
   "dependencies": {
     "@capacitor/core": "^8.0.0",
